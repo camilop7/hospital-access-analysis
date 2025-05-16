@@ -1,0 +1,13 @@
+# Python env
+venv/
+__pycache__/
+*.py[cod]
+
+# Logs
+*.log
+
+# Credentials (keep your service account key private)
+credentials/*.json
+
+# Data (if you need to keep shapes out of repo)
+# data/
