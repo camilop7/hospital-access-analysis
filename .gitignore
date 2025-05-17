@@ -11,3 +11,4 @@ credentials/*.json
 
 # Data (if you need to keep shapes out of repo)
 # data/
+.env

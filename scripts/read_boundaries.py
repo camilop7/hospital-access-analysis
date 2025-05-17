@@ -1,67 +1,55 @@
 #!/usr/bin/env python3
-import os
+import os, argparse, random
 import geopandas as gpd
-import random
 from shapely.geometry import Point
 
-# 1. Point to your boundaries folder
-BASE = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "data", "boundaries")
-)
-if not os.path.isdir(BASE):
-    raise FileNotFoundError(f"No boundaries directory at {BASE}")
+def main():
+    p = argparse.ArgumentParser(
+        description="Sample random points inside a single city polygon"
+    )
+    p.add_argument("--folder", required=True,
+                   help="Directory containing the GADM shapefiles for this country (e.g. data/boundaries/Colombia_level2)")
+    p.add_argument("--city", required=True,
+                   help="Exact NAME_2 of the municipality (e.g. 'Bogotá D.C.')")
+    p.add_argument("-n", type=int, default=100,
+                   help="Number of random points to generate")
+    args = p.parse_args()
 
-# 2. Load all shapefiles
-loaded_layers = []
-for country in sorted(os.listdir(BASE)):
-    folder = os.path.join(BASE, country)
-    if not os.path.isdir(folder):
-        continue
-    for fname in os.listdir(folder):
-        if fname.endswith(".shp"):
-            path = os.path.join(folder, fname)
-            print(f"Loading {path}…")
-            gdf = gpd.read_file(path)
-            loaded_layers.append((path, gdf))
-            print(f"  • rows: {len(gdf)}, CRS: {gdf.crs}")
+    # find the single level-2 shapefile
+    shp_files = [f for f in os.listdir(args.folder) if f.endswith("_2.shp")]
+    if not shp_files:
+        raise FileNotFoundError(f"No level-2 .shp in {args.folder}")
+    shp_path = os.path.join(args.folder, shp_files[0])
+    print(f"Loading {shp_path}…")
+    gdf2 = gpd.read_file(shp_path)
 
-# 3. Filter for level-2 shapefile(s)
-level2 = [(p, g) for p, g in loaded_layers if p.endswith("_2.shp")]
-if not level2:
-    raise ValueError("No level-2 (_2.shp) layers found.")
-shp2_path, gdf2 = level2[0]
-print(f"\n→ Using level-2 layer: {shp2_path}\n")
-print(gdf2.head())
+    # filter to the desired city
+    city_gdf = gdf2[gdf2["NAME_2"] == args.city]
+    if city_gdf.empty:
+        raise ValueError(f"No feature named '{args.city}' in {shp_path}")
+    print(f"Found polygon for {args.city}, generating {args.n} points…")
 
-# 4. (Optional) sample random points inside one municipality
-TARGET = "Bogotá D.C."   # change to whichever NAME_2 you need
-if "NAME_2" not in gdf2.columns:
-    raise KeyError(f"'NAME_2' column missing (found: {gdf2.columns.tolist()})")
+    # generate random points
+    poly = city_gdf.unary_union
+    minx, miny, maxx, maxy = poly.bounds
 
-city = gdf2[gdf2["NAME_2"] == TARGET]
-if city.empty:
-    raise ValueError(f"No feature named '{TARGET}' in NAME_2")
+    def random_point():
+        while True:
+            p = Point(random.uniform(minx, maxx),
+                      random.uniform(miny, maxy))
+            if poly.contains(p):
+                return p
 
-poly = city.unary_union
-minx, miny, maxx, maxy = poly.bounds
+    points = [random_point() for _ in range(args.n)]
+    pts_gdf = gpd.GeoDataFrame(geometry=points, crs=gdf2.crs)
 
-def random_point(poly):
-    while True:
-        pt = Point(random.uniform(minx, maxx),
-                   random.uniform(miny, maxy))
-        if poly.contains(pt):
-            return pt
+    # write out
+    safe = args.city.replace(" ", "_").replace(".", "")
+    out_folder = os.path.join("data", "samples")
+    os.makedirs(out_folder, exist_ok=True)
+    out_path = os.path.join(out_folder, f"{safe}_points.geojson")
+    pts_gdf.to_file(out_path, driver="GeoJSON")
+    print(f"Saved {len(points)} points to {out_path}")
 
-N = 100
-pts = [random_point(poly) for _ in range(N)]
-pts_gdf = gpd.GeoDataFrame(geometry=pts, crs=gdf2.crs)
-print(f"\nGenerated {len(pts_gdf)} points inside {TARGET}:")
-print(pts_gdf.head())
-
-# 5. Save out if you like
-out = os.path.join(os.path.dirname(__file__),
-                   "..", "data", "samples",
-                   f"{TARGET.replace(' ', '_')}_points.geojson")
-os.makedirs(os.path.dirname(out), exist_ok=True)
-pts_gdf.to_file(out, driver="GeoJSON")
-print(f"\nSaved samples to: {out}")
+if __name__=="__main__":
+    main()
